@@ -69,7 +69,7 @@ class TestGeminiProvider(unittest.TestCase):
         from errors import LLMError
 
         _install_fake_genai(lambda *a, **k: _FakeResponse(""))
-        provider = GeminiProvider(api_key="fake-key", model_name="gemini-flash-latest" max_retries=0)
+        provider = GeminiProvider(api_key="fake-key", model_name="gemini-flash-latest" ,max_retries=0)
         with self.assertRaises(LLMError):
             provider.generate([ChatMessage(role="user", content="hello")])
 
