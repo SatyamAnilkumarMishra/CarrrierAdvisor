@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 import logging
@@ -25,20 +26,203 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# --- Minimal, intentional theming (avoids the raw Streamlit-default look) ---
+# --- "Night Navigator" design system: a dark, compass-themed reskin ---
+# Token system: void/surface/elevated backgrounds, gold = destination/CTA,
+# violet = in-progress/interactive, teal = matched/success, rose = gap/error.
 st.markdown(
     """
     <style>
-        .block-container { padding-top: 2rem; max-width: 1000px; }
-        [data-testid="stChatMessage"] { border-radius: 12px; }
-        .career-advisor-tagline { color: #6b7280; font-size: 1.05rem; margin-top: -0.6rem; }
-        .career-advisor-badge {
-            display: inline-block; padding: 0.15rem 0.6rem; border-radius: 999px;
-            font-size: 0.78rem; font-weight: 600; margin-right: 0.4rem;
+        @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap');
+
+        :root {
+            --cd-void: #08080c;
+            --cd-surface: #121218;
+            --cd-elevated: #191922;
+            --cd-elevated-2: #1f1f2b;
+            --cd-border: rgba(255,255,255,0.08);
+            --cd-border-strong: rgba(255,255,255,0.14);
+            --cd-text: #f0f0f5;
+            --cd-muted: #9a9aab;
+            --cd-faint: #6b6b7d;
+            --cd-gold: #f2b705;
+            --cd-gold-dim: rgba(242,183,5,0.14);
+            --cd-violet: #7c6fff;
+            --cd-violet-dim: rgba(124,111,255,0.14);
+            --cd-teal: #00d9b5;
+            --cd-teal-dim: rgba(0,217,181,0.14);
+            --cd-rose: #ff6b6b;
+            --cd-rose-dim: rgba(255,107,107,0.14);
         }
-        .badge-ok { background: #dcfce7; color: #166534; }
-        .badge-warn { background: #fef9c3; color: #854d0e; }
-        .badge-off { background: #f3f4f6; color: #6b7280; }
+
+        html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+
+        /* ---- App shell: near-black with a slow-drifting aurora ---- */
+        .stApp {
+            background: var(--cd-void);
+            position: relative;
+            overflow-x: hidden;
+        }
+        .stApp::before {
+            content: "";
+            position: fixed;
+            inset: -20%;
+            z-index: 0;
+            pointer-events: none;
+            background:
+                radial-gradient(38% 30% at 15% 8%, rgba(124,111,255,0.16), transparent 60%),
+                radial-gradient(32% 26% at 88% 18%, rgba(242,183,5,0.10), transparent 60%),
+                radial-gradient(30% 24% at 60% 92%, rgba(0,217,181,0.08), transparent 60%);
+            animation: cd-drift 26s ease-in-out infinite alternate;
+            filter: blur(10px);
+        }
+        @keyframes cd-drift {
+            0%   { transform: translate(0%, 0%) scale(1); }
+            50%  { transform: translate(2%, -3%) scale(1.06); }
+            100% { transform: translate(-3%, 2%) scale(1.02); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .stApp::before { animation: none; }
+        }
+
+        .block-container { padding-top: 2.2rem; max-width: 1020px; position: relative; z-index: 1; }
+
+        /* ---- Hero / header ---- */
+        .cd-hero {
+            display: flex; align-items: center; gap: 0.9rem;
+            padding: 1.4rem 1.6rem;
+            margin-bottom: 0.6rem;
+            border-radius: 18px;
+            background: linear-gradient(135deg, rgba(124,111,255,0.10), rgba(242,183,5,0.06));
+            border: 1px solid var(--cd-border);
+        }
+        .cd-hero-icon {
+            font-size: 2.1rem;
+            filter: drop-shadow(0 0 14px rgba(242,183,5,0.45));
+            flex-shrink: 0;
+        }
+        .cd-hero-title {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 1.9rem; font-weight: 700; color: var(--cd-text);
+            letter-spacing: -0.02em; line-height: 1.15; margin: 0;
+        }
+        .career-advisor-tagline {
+            color: var(--cd-muted); font-size: 0.98rem; margin-top: 0.25rem; line-height: 1.5;
+        }
+
+        /* ---- Headings ---- */
+        h1, h2, h3 { font-family: 'Space Grotesk', sans-serif; letter-spacing: -0.01em; color: var(--cd-text) !important; }
+        h3 { font-size: 1.15rem !important; }
+
+        /* ---- Badges ---- */
+        .career-advisor-badge {
+            display: inline-block; padding: 0.22rem 0.75rem; border-radius: 999px;
+            font-size: 0.74rem; font-weight: 600; margin-right: 0.4rem;
+            letter-spacing: 0.02em; text-transform: uppercase;
+            border: 1px solid transparent;
+        }
+        .badge-ok   { background: var(--cd-teal-dim);   color: var(--cd-teal);   border-color: rgba(0,217,181,0.3); }
+        .badge-warn { background: var(--cd-gold-dim);   color: var(--cd-gold);   border-color: rgba(242,183,5,0.3); }
+        .badge-off  { background: rgba(255,255,255,0.05); color: var(--cd-faint); border-color: var(--cd-border); }
+
+        /* ---- Sidebar ---- */
+        [data-testid="stSidebar"] {
+            background: var(--cd-surface);
+            border-right: 1px solid var(--cd-border);
+        }
+        [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 {
+            font-size: 0.95rem !important; color: var(--cd-muted) !important;
+            text-transform: uppercase; letter-spacing: 0.06em;
+        }
+
+        /* ---- Tabs ---- */
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 4px; background: var(--cd-surface); padding: 5px;
+            border-radius: 12px; border: 1px solid var(--cd-border);
+        }
+        .stTabs [data-baseweb="tab"] {
+            border-radius: 9px; color: var(--cd-muted); font-weight: 500;
+            padding: 8px 16px; background: transparent;
+        }
+        .stTabs [aria-selected="true"] {
+            background: var(--cd-elevated-2) !important;
+            color: var(--cd-text) !important;
+            box-shadow: inset 0 0 0 1px var(--cd-border-strong);
+        }
+
+        /* ---- Buttons ---- */
+        .stButton > button {
+            background: linear-gradient(135deg, var(--cd-gold), #ffce3a);
+            color: #1a1200; font-weight: 700; border: none; border-radius: 10px;
+            padding: 0.55rem 1.1rem; transition: transform 0.15s ease, box-shadow 0.15s ease;
+            box-shadow: 0 4px 14px rgba(242,183,5,0.18);
+        }
+        .stButton > button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 6px 20px rgba(242,183,5,0.3);
+        }
+        .stButton > button:active { transform: translateY(0); }
+
+        /* ---- Inputs ---- */
+        [data-testid="stTextInput"] input,
+        [data-testid="stTextArea"] textarea,
+        [data-testid="stNumberInput"] input,
+        .stSelectbox div[data-baseweb="select"] > div {
+            background: var(--cd-surface) !important;
+            border: 1px solid var(--cd-border) !important;
+            color: var(--cd-text) !important;
+            border-radius: 9px !important;
+        }
+        [data-testid="stTextInput"] input:focus,
+        [data-testid="stTextArea"] textarea:focus {
+            border-color: var(--cd-violet) !important;
+            box-shadow: 0 0 0 1px var(--cd-violet) !important;
+        }
+
+        /* ---- File uploader ---- */
+        [data-testid="stFileUploaderDropzone"] {
+            background: var(--cd-surface);
+            border: 1.5px dashed var(--cd-border-strong);
+            border-radius: 12px;
+        }
+
+        /* ---- Expanders (used for jobs, roadmap milestones, sources) ---- */
+        [data-testid="stExpander"] {
+            background: var(--cd-elevated);
+            border: 1px solid var(--cd-border);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+        [data-testid="stExpander"] summary { color: var(--cd-text) !important; font-weight: 500; }
+
+        /* ---- Alerts (st.info / success / warning / error) ---- */
+        [data-testid="stAlert"] {
+            background: var(--cd-elevated) !important;
+            border: 1px solid var(--cd-border);
+            border-radius: 12px;
+        }
+
+        /* ---- Chat ---- */
+        [data-testid="stChatMessage"] {
+            background: var(--cd-elevated);
+            border: 1px solid var(--cd-border);
+            border-radius: 14px;
+        }
+        [data-testid="stChatInput"] {
+            background: var(--cd-surface);
+            border: 1px solid var(--cd-border-strong);
+            border-radius: 14px;
+        }
+        [data-testid="stChatInput"] textarea { color: var(--cd-text) !important; }
+
+        /* ---- Misc ---- */
+        hr { border-color: var(--cd-border) !important; }
+        [data-testid="stCaptionContainer"] { color: var(--cd-faint) !important; font-family: 'JetBrains Mono', monospace; font-size: 0.78rem; }
+        code { color: var(--cd-teal) !important; background: rgba(0,217,181,0.08) !important; }
+
+        ::-webkit-scrollbar { width: 10px; height: 10px; }
+        ::-webkit-scrollbar-track { background: var(--cd-void); }
+        ::-webkit-scrollbar-thumb { background: var(--cd-elevated-2); border-radius: 8px; border: 2px solid var(--cd-void); }
+        ::-webkit-scrollbar-thumb:hover { background: var(--cd-border-strong); }
     </style>
     """,
     unsafe_allow_html=True,
@@ -411,14 +595,20 @@ def main() -> None:
             st.session_state.messages = []
             st.rerun()
 
-    st.title("🧭 Career Advisor")
     st.markdown(
-        '<p class="career-advisor-tagline">Practical, grounded career guidance — '
-        "ask a general question, upload a document for answers tied to it, or "
-        "use the Career Tools for job search, resume review, skill gaps, and roadmaps.</p>",
+        """
+        <div class="cd-hero">
+            <div class="cd-hero-icon">🧭</div>
+            <div>
+                <p class="cd-hero-title">Career Advisor</p>
+                <p class="career-advisor-tagline">Practical, grounded career guidance —
+                ask a general question, upload a document for answers tied to it, or
+                use the Career Tools for job search, resume review, skill gaps, and roadmaps.</p>
+            </div>
+        </div>
+        """,
         unsafe_allow_html=True,
     )
-    st.divider()
 
     if st.session_state.init_error:
         st.error(st.session_state.init_error)
