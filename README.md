@@ -82,8 +82,6 @@ module breakdown.
 **Requirements**: Python 3.10+, a [Google Gemini API key](https://aistudio.google.com/).
 
 ```bash
-git clone https://github.com/<your-username>/<your-repo>.git
-cd career-advisor
 
 pip install -r requirements.txt
 
