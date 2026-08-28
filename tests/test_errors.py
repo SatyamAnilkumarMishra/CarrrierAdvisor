@@ -46,3 +46,20 @@ class TestRetryWithBackoff(unittest.TestCase):
 
         self.assertEqual(fails_twice_then_succeeds(), "ok")
         self.assertEqual(calls["count"], 3)
+
+    @patch("errors.time.sleep", return_value=None)
+    def test_raises_after_exhausting_retries(self, _mock_sleep):
+        calls = {"count": 0}
+
+        @retry_with_backoff(max_retries=2, base_delay_seconds=0)
+        def always_fails():
+            calls["count"] += 1
+            raise ConnectionError("permanent")
+
+        with self.assertRaises(ConnectionError):
+            always_fails()
+        self.assertEqual(calls["count"], 3)  # initial attempt + 2 retries
+
+
+if __name__ == "__main__":
+    unittest.main()
