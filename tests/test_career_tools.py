@@ -99,3 +99,86 @@ class TestSkillGapAnalyzer(unittest.TestCase):
         llm = FakeLLMProvider(f"```json\n{json.dumps(payload)}\n```")
         result = analyze_skill_gap([], "Data Scientist", llm)
         self.assertEqual(result.overall_readiness, "low")
+
+    def test_empty_target_role_raises(self):
+        llm = FakeLLMProvider("{}")
+        with self.assertRaises(LLMError):
+            analyze_skill_gap(["Python"], "  ", llm)
+
+    def test_invalid_json_raises_llm_error(self):
+        llm = FakeLLMProvider("not json at all")
+        with self.assertRaises(LLMError):
+            analyze_skill_gap(["Python"], "Data Analyst", llm)
+
+
+class TestResumeAnalyzer(unittest.TestCase):
+    def test_parses_well_formed_json(self):
+        payload = {
+            "extracted_skills": ["Excel", "SQL"],
+            "experience_summary": "2 years in marketing analytics.",
+            "strengths": ["Data-driven"],
+            "gaps_or_improvements": ["No Python experience"],
+            "suggested_target_roles": ["Marketing Analyst"],
+        }
+        llm = FakeLLMProvider(json.dumps(payload))
+        result = analyze_resume("Some resume text describing experience.", llm)
+        self.assertEqual(result.extracted_skills, ["Excel", "SQL"])
+        self.assertEqual(result.suggested_target_roles, ["Marketing Analyst"])
+
+    def test_empty_resume_text_raises(self):
+        llm = FakeLLMProvider("{}")
+        with self.assertRaises(LLMError):
+            analyze_resume("   ", llm)
+
+    def test_target_role_is_included_in_prompt(self):
+        payload = {
+            "extracted_skills": [],
+            "experience_summary": "",
+            "strengths": [],
+            "gaps_or_improvements": [],
+            "suggested_target_roles": [],
+        }
+        llm = FakeLLMProvider(json.dumps(payload))
+        analyze_resume("Some resume text.", llm, target_role="Backend Engineer")
+        self.assertIn("Backend Engineer", llm.last_prompt)
+
+
+class TestRoadmapGenerator(unittest.TestCase):
+    def test_parses_milestones(self):
+        payload = {
+            "milestones": [
+                {
+                    "title": "Foundations",
+                    "duration": "Weeks 1-4",
+                    "focus_skills": ["Python"],
+                    "actions": ["Complete a Python course"],
+                },
+                {
+                    "title": "Applied projects",
+                    "duration": "Weeks 5-12",
+                    "focus_skills": ["SQL"],
+                    "actions": ["Build a portfolio project"],
+                },
+            ],
+            "summary": "A steady path into data analytics.",
+        }
+        llm = FakeLLMProvider(json.dumps(payload))
+        result = generate_roadmap(["Excel"], "Data Analyst", llm, timeframe_months=3)
+        self.assertEqual(len(result.milestones), 2)
+        self.assertEqual(result.milestones[0].title, "Foundations")
+        self.assertEqual(result.target_role, "Data Analyst")
+
+    def test_empty_target_role_raises(self):
+        llm = FakeLLMProvider("{}")
+        with self.assertRaises(LLMError):
+            generate_roadmap(["Python"], "", llm)
+
+    def test_timeframe_is_clamped(self):
+        payload = {"milestones": [], "summary": "ok"}
+        llm = FakeLLMProvider(json.dumps(payload))
+        generate_roadmap(["Python"], "Data Analyst", llm, timeframe_months=999)
+        self.assertIn("36 months", llm.last_prompt)
+
+
+if __name__ == "__main__":
+    unittest.main()
