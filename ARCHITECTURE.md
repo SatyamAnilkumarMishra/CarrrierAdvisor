@@ -1,155 +1,99 @@
 # Architecture
 
-Career Advisor is a single-provider **Retrieval-Augmented Generation (RAG)**
-system with one lightweight decision step before retrieval — not a
-multi-agent pipeline. This document explains how a request actually flows
-through the system and why the code is organized the way it is.
+Career Advisor is a production-ready, dual-tier application featuring a **Next.js 16 + React 19 + TypeScript** modern web frontend and a **FastAPI / MCP** Python backend.
 
-## Data flow
+---
 
-```
-                     ┌─────────────────────────┐
-                     │   PDF (upload or         │
-                     │   default document)      │
-                     └────────────┬─────────────┘
-                                  │  validate_pdf()
-                                  ▼
-                     ┌─────────────────────────┐
-                     │  PyPDFLoader              │  rag_pipeline.py
-                     │  → RecursiveCharacter     │
-                     │    TextSplitter           │
-                     └────────────┬─────────────┘
-                                  │  chunks
-                                  ▼
-                     ┌─────────────────────────┐
-                     │  HuggingFace embeddings   │
-                     │  (all-MiniLM-L6-v2)       │
-                     │  → Chroma vector store    │
-                     │    (persisted to disk)    │
-                     └────────────┬─────────────┘
-                                  │
-   ┌──────────────┐   query      │
-   │ User (Streamlit│──────────► │
-   │ UI or CLI)     │             │
-   └──────────────┘             ▼
-                     ┌─────────────────────────┐
-                     │  1. decide_needs_        │  llm_providers.py
-                     │     retrieval(query)     │  (LLM call — real
-                     │                           │   decision, not a
-                     │  2. if yes → similarity   │   rule-based stub)
-                     │     search + relevance    │  rag_pipeline.py
-                     │     threshold filter      │
-                     │                           │
-                     │  3. build prompt with     │  rag_service.py
-                     │     history + context     │
-                     │                           │
-                     │  4. generate()            │  llm_providers.py
-                     └────────────┬─────────────┘
-                                  │  answer + sources
-                                  ▼
-                     ┌─────────────────────────┐
-                     │  Streamlit UI / CLI       │
-                     │  (renders answer +        │
-                     │   source attribution)     │
-                     └─────────────────────────┘
-```
-
-## Why a query doesn't always trigger retrieval
-
-The original version of this project always ran a similarity search whenever
-a document was loaded, even for questions unrelated to it (e.g. "what should
-I wear to an interview?" against a resume-writing guide). That pollutes the
-prompt with irrelevant context and produces worse answers.
-
-`GeminiProvider.decide_needs_retrieval()` asks the model a small, separate
-yes/no question first. Only if the answer is "yes" does `rag_pipeline.py` run
-a similarity search — and even then, results below
-`Settings.relevance_score_threshold` are dropped before being added to the
-prompt. This is the one deliberately "agentic" decision point in an otherwise
-straightforward RAG pipeline; see `llm_providers.py` for the reasoning behind
-keeping it minimal rather than reaching for a full multi-agent framework.
-
-## Module map
-
-| Module | Responsibility |
-|---|---|
-| `config.py` | Loads and validates all environment-derived settings. Single source of truth — no other module calls `os.getenv()` directly. |
-| `errors.py` | Shared exception types and a retry-with-backoff decorator. Ensures user-facing messages never leak internals. |
-| `llm_providers.py` | `LLMProvider` abstract interface + `GeminiProvider` implementation. Swapping models later means adding one class here. |
-| `rag_pipeline.py` | PDF validation, chunking, embedding, vector store build/load, relevance-filtered retrieval. |
-| `rag_service.py` | Ties retrieval + generation + conversation memory together for chat. **The single place every chat front door calls.** |
-| `career_tools.py` | Job search, skill-gap analysis, resume analysis, roadmap generation. **The single place every tool front door calls** (Streamlit "Career Tools" tab, `mcp_server.py`, `evaluation.py`). |
-| `resume_pipeline.py` | Resume upload validation + text extraction (PDF/DOCX/TXT), separate from `rag_pipeline.py` since resumes aren't indexed into the vector store. |
-| `jobs_data.py` | Small bundled sample job dataset used as a fallback when no live job-search API is configured. |
-| `tracing.py` | Configures LangSmith env vars once per process; exposes `traceable`, a no-op pass-through when tracing is disabled/unavailable. |
-| `evaluation.py` | LangSmith evaluation harness (`python evaluation.py`) — scores the chat flow and career tools against small hand-curated datasets. |
-| `mcp_server.py` | MCP server exposing the four career tools to external MCP clients (Claude Desktop, Claude Code, etc.), built on `career_tools.py` and `resume_pipeline.py`. |
-| `app.py` | Streamlit UI: a Chat tab (`rag_service.py`) and a Career Tools tab set (`career_tools.py`). Presentation only — no business logic. |
-| `main.py` | CLI. Presentation only — shares chat logic with `app.py` via `rag_service.py`. |
-| `run.py` | Developer convenience commands (`install` / `setup` / `status` / `web` / `cli` / `mcp`). |
-
-## Career tools data flow
-
-The four career tools are a second, parallel surface alongside chat — they
-don't touch the vector store or conversation history, and each is a single
-LLM call (except job search, which isn't an LLM call at all):
+## High-Level System Architecture
 
 ```
-                     ┌──────────────────────────┐
-                     │ Streamlit "Career Tools"  │
-                     │ tabs  /  MCP client        │
-                     └────────────┬───────────────┘
-                                  │
-              ┌───────────────────┼────────────────────┬─────────────────────┐
-              ▼                   ▼                     ▼                    ▼
-    ┌─────────────────┐ ┌──────────────────┐ ┌────────────────────┐ ┌──────────────────┐
-    │ search_jobs()     │ │ analyze_skill_gap()│ │ analyze_resume()    │ │ generate_roadmap()│
-    │ career_tools.py   │ │ career_tools.py    │ │ career_tools.py     │ │ career_tools.py   │
-    │                    │ │                     │ │                      │ │                    │
-    │ Adzuna API if      │ │ LLM call →          │ │ resume_pipeline.py   │ │ LLM call →         │
-    │ configured, else    │ │ structured JSON     │ │ extracts text first  │ │ structured JSON    │
-    │ bundled dataset     │ │                     │ │ (PDF/DOCX/TXT) →     │ │ (milestones)       │
-    │ (jobs_data.py)      │ │                     │ │ LLM call → JSON      │ │                    │
-    └─────────────────┘ └──────────────────┘ └────────────────────┘ └──────────────────┘
+┌────────────────────────────────────────────────────────────┐
+│                    Next.js Frontend (Port 3000)            │
+│  - AI Career Agent Chat with Animated Levitating Mascot    │
+│  - Resume Analyzer & Verified Skills Extraction             │
+│  - Skill Gap Matrix & Readiness Evaluation                 │
+│  - Milestone-based Learning Roadmap Generator              │
+│  - Live Job Matcher & Opportunities Browser                │
+│  - Knowledge & Context Hub (PDF Indexing & Profile)        │
+└─────────────────────────────┬──────────────────────────────┘
+                              │ REST HTTP Requests (CORS)
+                              ▼
+┌────────────────────────────────────────────────────────────┐
+│                    FastAPI Backend (Port 8000)             │
+│                     backend/server.py                      │
+├────────────────────────────────────────────────────────────┤
+│  Core Backend Services (backend/):                         │
+│  ├── rag_service.py       -> RAG & Conversation Engine     │
+│  ├── rag_pipeline.py      -> PDF Chunking, Embeddings,     │
+│  │                           ChromaDB Vector Store         │
+│  ├── career_tools.py      -> Career Intelligence Tools:    │
+│  │                           Resume, Skill Gap, Roadmap,   │
+│  │                           Job Search                    │
+│  ├── resume_pipeline.py   -> Multi-format parser           │
+│  │                           (PDF, DOCX, TXT)              │
+│  ├── llm_providers.py     -> Google Gemini Model Adapter   │
+│  ├── mcp_server.py        -> Model Context Protocol Server │
+│  ├── main.py              -> Interactive Terminal CLI      │
+│  ├── config.py            -> Single source of truth config │
+│  ├── errors.py            -> Safe error handling & retries │
+│  ├── tracing.py           -> LangSmith Telemetry & Tracing │
+│  └── evaluation.py        -> Benchmark Evaluation Harness  │
+└────────────────────────────────────────────────────────────┘
 ```
 
-Every one of these calls is wrapped with `@traceable` (`tracing.py`), so when
-`LANGSMITH_TRACING=true` each run — inputs, outputs, latency — is logged to
-LangSmith exactly like the chat flow's `RagService.answer()` and
-`GeminiProvider.generate()` calls. `evaluation.py` scores this surface using
-the same underlying functions, so a prompt change here is checked the same
-way a chat-prompt change is.
+---
 
-## Why the MCP server shares `career_tools.py` instead of reimplementing it
+## Data Flow: RAG Document Chat
 
-`mcp_server.py` calls the exact same functions the Streamlit "Career Tools"
-tabs call — same pattern as `rag_service.py` being the single shared brain
-behind `app.py` and `main.py`. This means an MCP client (e.g. Claude Desktop)
-and a person using the web UI always get identical tool behavior, and a
-prompt fix only needs to happen in one place.
+```
+PDF upload (Reference Doc)
+        │ validate_pdf()
+        ▼
+PyPDFLoader → RecursiveCharacterTextSplitter
+        │ chunks
+        ▼
+HuggingFace embeddings (all-MiniLM-L6-v2) → Chroma vector store
+        │
+User Query ──► 1. decide_needs_retrieval(query) (LLM decision)
+                    │
+                    ├── If YES: ChromaDB similarity search + relevance filter
+                    │
+               2. Build prompt with history + grounded context
+                    │
+               3. Gemini generate() → answer + source citations
+```
 
-## Conversation memory
+---
 
-Each session keeps a bounded window of prior turns
-(`Settings.max_history_turns`, default 6 exchanges). `rag_service.trim_history()`
-truncates older turns before they're sent to the model, keeping prompt size —
-and cost — predictable regardless of how long a conversation runs.
+## Directory Organization
 
-## Configuration boundary
-
-`config.py` is the only module that reads environment variables directly.
-Everything else receives a validated `Settings` object. This makes the rest
-of the codebase trivially testable (see `tests/`) without needing a real
-`.env` file, and means a misconfigured deployment fails immediately at
-startup with a specific, actionable error instead of a confusing failure
-three requests later.
-
-## A note on dependency pinning: `mcp`
-
-`requirements.txt` pins `mcp>=1.2.0,<2.0.0`. The `mcp` package's 2.x line
-restructured its server API — `FastMCP` (what `mcp_server.py` is built on)
-was renamed/moved to `MCPServer` under `mcp.server.mcpserver`. Letting pip
-resolve an unconstrained `mcp>=1.2.0` would silently pull in 2.x and break
-`mcp_server.py` at import time. If you want to move to the 2.x API, update
-the `from mcp.server.fastmcp import FastMCP` import and tool-registration
-calls in `mcp_server.py` accordingly, then relax this pin.
+```
+career-advisor/
+├── backend/                  # Python Backend Package
+│   ├── __init__.py
+│   ├── server.py             # FastAPI REST Server
+│   ├── career_tools.py       # Core tool algorithms & business logic
+│   ├── rag_service.py        # RAG orchestration service
+│   ├── rag_pipeline.py       # Chroma vector store & embeddings
+│   ├── resume_pipeline.py    # Resume text extraction (PDF, DOCX, TXT)
+│   ├── llm_providers.py      # Gemini API provider & ChatMessage types
+│   ├── mcp_server.py         # MCP server for external AI agents
+│   ├── main.py               # Terminal CLI interface
+│   ├── jobs_data.py          # Fallback job listings dataset
+│   ├── config.py             # App settings & validation
+│   ├── errors.py             # Custom exceptions & backoff retry
+│   ├── tracing.py            # LangSmith tracing & telemetry
+│   └── evaluation.py         # Evaluation benchmark harness
+├── frontend/                 # Next.js 16 Web Application
+│   ├── src/
+│   │   ├── app/              # App router & global styles
+│   │   ├── components/       # Workspace view components & UI widgets
+│   │   ├── lib/api.ts        # API client for FastAPI backend
+│   │   └── types/index.ts    # Shared TypeScript data models
+│   ├── package.json
+│   └── tsconfig.json
+├── tests/                    # Backend Unit & Integration Tests
+├── run.py                    # Root Unified Runner
+├── requirements.txt          # Python dependencies
+└── pyproject.toml            # Project configuration & pytest settings
+```
